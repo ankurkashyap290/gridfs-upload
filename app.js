@@ -1,72 +1,170 @@
-const { MongoClient } = require("mongodb");
-const fs = require('fs');
-const assert = require('assert');
+const express = require("express");
+const app = express();
+const crypto = require("crypto");
+const path = require("path");
+const mongoose = require("mongoose");
+const multer = require("multer");
+const GridFsStorage = require("multer-gridfs-storage");
 
-const uri = "mongodb://localhost:27017";
+// Middlewares
+app.use(express.json());
+app.set("view engine", "ejs");
 
-const client = new MongoClient(uri, {
+// DB
+const mongoURI = "mongodb://localhost:27017/upload-medias";
+
+// connection
+const conn = mongoose.createConnection(mongoURI, {
   useNewUrlParser: true,
-  useUnifiedTopology: true,
+  useUnifiedTopology: true
 });
 
-async function getAll() {
-  try {
-    await client.connect();
-    const database = client.db("upload-medias");
-    const medias = database.collection("medias");
-    const mediaList = await medias.find({});
-    console.log(mediaList);
-  } finally {
-    await client.close();
-  }
-}
-getAll().catch(console.dir);
+// init gfs
+let gfs;
+conn.once("open", () => {
+  gfs = new mongoose.mongo.GridFSBucket(conn.db, {
+    bucketName: "uploads"
+  });
+});
 
-async function upload() {
-  try {
-    await client.connect();
-    const database = client.db("upload-medias");
-    var bucket = new mongodb.GridFSBucket(db);
-
-    var writestream = fs.createReadStream('./meistersinger.mp3').
-    pipe(bucket.openUploadStream('meistersinger.mp3')).
-    on('error', function(error) {
-      assert.ifError(error);
-    }).
-    on('finish', function() {
-      fs.createReadStream(__dirname + "/uploads/" + name).pipe(writestream);
-      console.log('done!');
-      process.exit(0);
+// For Db Storage
+const storage = new GridFsStorage({
+  url: mongoURI,
+  file: (req, file) => {
+    return new Promise((resolve, reject) => {
+      crypto.randomBytes(16, (err, buf) => {
+        if (err) {
+          return reject(err);
+        }
+        const filename =file.originalname;
+        const fileInfo = {
+          filename: filename,
+          bucketName: "uploads"
+        };
+        resolve(fileInfo);
+      });
     });
-    // const medias = database.collection("medias");
-    // const newMedia = { name: "Red", town: "kanto" };
-    // const result = await medias.insertOne(newMedia);
-    // console.log(
-    //   `${result.insertedCount} documents were inserted with the _id: ${result.insertedId}`,
-    // );
-  } finally {
-    await client.close();
   }
+});
+const upload = multer({
+  storage
+});
+
+// For Local Storage
+const diskstorage = multer.diskStorage({
+  destination: function(req, file, cb) {
+      cb(null, path.join(__dirname + '/uploads/'));
+  },
+  filename: function(req, file, cb) {
+      cb(null, file.originalname);
+  }
+});
+const diskupload = multer({ storage: diskstorage });
+
+function fileUpload(req, res, next) {
+  upload.single('file')(req, res, next);
+  diskupload.single('file')(req, res, next);
+  next();
 }
-upload().catch(console.dir);
 
-async function download() {
-  try {
-    await client.connect();
-    const database = client.db("upload-medias");
-    var bucket = new mongodb.GridFSBucket(db);
+// get 
+app.get("/", (req, res) => {
+  if(!gfs) {
+    console.log("some error occured, check connection to db");
+    res.send("some error occured, check connection to db");
+    process.exit(0);
+  }
+  gfs.find().toArray((err, files) => {
+    if (!files || files.length === 0) {
+      return res.render("index", {
+        files: false
+      });
+    } else {
+      const f = files
+        .map(file => {
+          if (
+            file.contentType === "image/png" ||
+            file.contentType === "image/jpeg"
+          ) {
+            file.isImage = true;
+          } else {
+            file.isImage = false;
+          }
+          return file;
+        })
+        .sort((a, b) => {
+          return (
+            new Date(b["uploadDate"]).getTime() -
+            new Date(a["uploadDate"]).getTime()
+          );
+        });
 
-    bucket.openDownloadStreamByName('meistersinger.mp3').
-    pipe(fs.createWriteStream('./output.mp3')).
-    on('error', function(error) {
-      assert.ifError(error);
-    }).
-    on('finish', function() {
-      console.log('done!');
-      process.exit(0);
+      return res.render("index", {
+        files: f
+      });
+    }
+
+    // return res.json(files);
+  });
+});
+
+app.post("/upload", fileUpload, async(req, res) => {
+  res.redirect("/");
+});
+
+app.get("/files", (req, res) => {
+  gfs.find().toArray((err, files) => {
+    if (!files || files.length === 0) {
+      return res.status(404).json({
+        err: "no files exist"
+      });
+    }
+    return res.json(files);
+  });
+});
+
+app.get("/files/:filename", (req, res) => {
+  gfs.find(
+    {
+      filename: req.params.filename
+    },
+    (err, file) => {
+      if (!file) {
+        return res.status(404).json({
+          err: "no files exist"
+        });
+      }
+
+      return res.json(file);
+    }
+  );
+});
+
+app.get("/image/:filename", (req, res) => {
+  const file = gfs
+    .find({
+      filename: req.params.filename
+    })
+    .toArray((err, files) => {
+      if (!files || files.length === 0) {
+        return res.status(404).json({
+          err: "no files exist"
+        });
+      }
+      gfs.openDownloadStreamByName(req.params.filename).pipe(res);
     });
-  } finally {
-    await client.close();
-  }
-}
-download().catch(console.dir);
+});
+
+
+app.post("/files/del/:id", (req, res) => {
+  gfs.delete(new mongoose.Types.ObjectId(req.params.id), (err, data) => {
+    if (err) return res.status(404).json({ err: err.message });
+    res.redirect("/");
+  });
+});
+
+const port = 5001;
+
+app.listen(port, () => {
+  console.log("server started on " + port);
+});
