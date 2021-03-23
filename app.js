@@ -140,20 +140,47 @@ app.get("/files/:filename", (req, res) => {
   );
 });
 
-app.get("/download/:filename", (req, res) => {
-  const file = gfs
-    .find({
-      filename: req.params.filename
-    })
-    .toArray((err, files) => {
-      if (!files || files.length === 0) {
-        return res.status(404).json({
-          err: "no files exist"
-        });
-      }
-      gfs.openDownloadStreamByName(req.params.filename).pipe(res);
-    });
-});
+// app.get("/download/:filename", (req, res) => {
+//   const file = gfs
+//     .find({
+//       filename: req.params.filename
+//     })
+//     .toArray((err, files) => {
+//       if (!files || files.length === 0) {
+//         return res.status(404).json({
+//           err: "no files exist"
+//         });
+//       }
+//       var stream = file.OpenRead();
+//       var newFs = new FileStream(newFileName, FileMode.Create
+//         using (stream)
+//     {
+//        var bytes = new byte[stream.Length];
+//        stream.Read(bytes, 0, (int)stream.Length);
+//        using(newFs))
+//        {
+//          newFs.Write(bytes, 0, bytes.Length);
+//        } 
+//     }
+//       // gfs.openDownloadStreamByName(req.params.filename).pipe(res);
+//     });
+// });
+
+app.get('/download/:filename', (req, res) => {
+  // Check file exist on MongoDB
+
+var filename = req.params.filename
+
+  gfs.find({ filename: filename }, (err, file) => {
+      if (err || !file) {
+          res.status(404).send('File Not Found');
+  return
+      } 
+
+var readstream = gfs.createReadStream({ filename: filename });
+readstream.pipe(res);            
+  });
+});	
 
 app.post("/files/del/:id", (req, res) => {
   gfs.delete(new mongoose.Types.ObjectId(req.params.id), (err, data) => {
