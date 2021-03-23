@@ -140,7 +140,7 @@ app.get("/files/:filename", (req, res) => {
   );
 });
 
-app.get("/image/:filename", (req, res) => {
+app.get("/download/:filename", (req, res) => {
   const file = gfs
     .find({
       filename: req.params.filename
@@ -154,7 +154,6 @@ app.get("/image/:filename", (req, res) => {
       gfs.openDownloadStreamByName(req.params.filename).pipe(res);
     });
 });
-
 
 app.post("/files/del/:id", (req, res) => {
   gfs.delete(new mongoose.Types.ObjectId(req.params.id), (err, data) => {
